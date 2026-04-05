@@ -139,7 +139,12 @@ loadChartJs(0);
     .print-cover { display: block !important; page-break-after: always; }
     .chart-card { break-inside: avoid; margin-bottom: 20px; }
     .weather-banner { break-inside: avoid; }
-    @page { size: A4; margin: 12mm; }
+    @page { size: A4 landscape; margin: 10mm; }
+    /* 数表PDF出力モード */
+    body.printing-table .panel#charts-panel { display: none !important; }
+    body.printing-table .panel#table-panel { display: block !important; }
+    body.printing-table .data-table { font-size: 9px; }
+    body.printing-table .data-table th, body.printing-table .data-table td { padding: 2px 4px; }
   }
   .print-cover { display: none; text-align: center; padding-top: 120px; }
   .print-cover .pc-tagline { font-size: 12px; color: #999; }
@@ -308,6 +313,24 @@ loadChartJs(0);
   </div>
 </div>
 
+<div class="section">
+  <div class="section-header" onclick="toggleSection(this)">● 住宅ローン控除 <span>▼</span></div>
+  <div class="section-body collapsed">
+    <div class="field"><label>控除を適用する</label><select id="deductionEnabled"><option value="yes" selected>はい</option><option value="no">いいえ</option></select></div>
+    <div class="field"><label>控除期間</label><select id="deductionYears"><option value="13" selected>13年（新築・買取再販）</option><option value="10">10年（中古・リフォーム）</option></select></div>
+    <div class="field"><label>控除率</label><input type="number" id="deductionRate" value="0.7" step="0.1"><span class="unit">%</span></div>
+    <div class="field"><label>借入限度額</label><select id="deductionLimit">
+      <option value="5000" selected>5,000万円（認定長期優良/低炭素）</option>
+      <option value="4500">4,500万円（ZEH水準）</option>
+      <option value="4000">4,000万円（省エネ基準適合）</option>
+      <option value="3000">3,000万円（その他新築）</option>
+      <option value="2000">2,000万円（中古）</option>
+      <option value="0">適用しない</option>
+    </select></div>
+    <div class="calc-box" id="deductionInfo">控除率0.7% × 13年間 ／ 限度額5,000万円 → 年間最大控除35.0万円</div>
+  </div>
+</div>
+
 <!-- ===== 生活費・支出（詳細） ===== -->
 <div class="section">
   <div class="section-header" onclick="toggleSection(this)">● 生活費（基本生活費） <span>▲</span></div>
@@ -397,7 +420,10 @@ loadChartJs(0);
 <!-- ==================== TABLE PANEL ==================== -->
 <div class="panel" id="table-panel">
   <div class="table-wrap" id="tableContainer"></div>
-  <button class="btn-secondary no-print" onclick="switchTab('charts')" style="margin-top:8px">グラフに戻る</button>
+  <div class="no-print" style="display:flex; gap:8px; margin-top:8px;">
+    <button class="btn-secondary" onclick="switchTab('charts')" style="flex:1">グラフに戻る</button>
+    <button class="btn-print" onclick="printTable()" style="flex:1">📄 数表PDF出力</button>
+  </div>
 </div>
 
 </div><!-- /container -->
@@ -615,7 +641,15 @@ function runSimulation() {
     const ca1 = c1a!=null?c1a+y:null, ca2 = c2a!=null?c2a+y:null;
     const ca = childAllowance(ca1)+childAllowance(ca2);
     const ret = (oAge===ownerRetireAge?ownerRetirement:0)+(sAge===spouseRetireAge?spouseRetirement:0);
-    const lc = (year>=purchaseYear&&year<purchaseYear+13&&loanData[y].bal>0) ? Math.min(35,Math.round(loanData[y].bal*0.007*10)/10) : 0;
+    // 住宅ローン控除
+    const dedEnabled = $('deductionEnabled').value === 'yes';
+    const dedYears = parseInt($('deductionYears').value)||13;
+    const dedRate = (parseFloat($('deductionRate').value)||0.7)/100;
+    const dedLimitAmt = parseInt($('deductionLimit').value)||5000;
+    const dedMaxAnnual = Math.round(dedLimitAmt * dedRate * 10)/10;
+    const elapsed_ded = year - purchaseYear;
+    const lc = (dedEnabled && elapsed_ded>=0 && elapsed_ded<dedYears && loanData[y].bal>0)
+      ? Math.min(dedMaxAnnual, Math.round(Math.min(loanData[y].bal, dedLimitAmt) * dedRate * 10)/10) : 0;
     const totInc = oInc+sInc+oPen+sPen+ca+ret+lc;
 
     const isPreP = year<purchaseYear;
@@ -867,19 +901,45 @@ function renderCharts() {
 // Table
 // ============================================================
 function renderTable() {
-  let html = '<table class="data-table"><thead><tr><th>西暦</th><th>年齢</th><th>天気</th><th>収入</th><th>支出</th><th>収支</th><th>貯蓄</th><th>ローン残</th></tr></thead><tbody>';
+  let html = '<table class="data-table"><thead><tr><th>西暦</th><th>年齢</th><th>天気</th><th>収入</th><th>ローン控除</th><th>支出</th><th>収支</th><th>貯蓄</th><th>ローン残</th></tr></thead><tbody>';
   simData.forEach(d => {
     const cls = d.savings<0 ? ' class="danger"' : '';
     const wi = d.weather === 'rainy' ? '🌧️' : d.weather === 'cloudy' ? '⛅' : '☀️';
-    html += `<tr${cls}><td>${d.year}</td><td>${d.oAge}</td><td class="weather-col">${wi}</td><td>${fmt(d.totInc)}</td><td>${fmt(d.totExp)}</td><td class="${d.bal<0?'negative':'positive'}">${fmt(d.bal)}</td><td class="${d.savings<0?'negative':''}">${fmt(d.savings)}</td><td style="color:#999">${fmt(d.loanBal)}</td></tr>`;
+    html += `<tr${cls}><td>${d.year}</td><td>${d.oAge}</td><td class="weather-col">${wi}</td><td>${fmt(d.totInc)}</td><td style="color:#43A047">${d.lc>0?fmt(d.lc):'-'}</td><td>${fmt(d.totExp)}</td><td class="${d.bal<0?'negative':'positive'}">${fmt(d.bal)}</td><td class="${d.savings<0?'negative':''}">${fmt(d.savings)}</td><td style="color:#999">${fmt(d.loanBal)}</td></tr>`;
   });
   html += '</tbody></table>';
   $('tableContainer').innerHTML = html;
 }
 
+function printTable() {
+  // Switch to table panel, trigger print, then allow user to save as PDF
+  const panels = document.querySelectorAll('.panel');
+  const prevActive = document.querySelector('.panel.active');
+  panels.forEach(p => p.classList.remove('active'));
+  document.getElementById('table-panel').classList.add('active');
+  document.body.classList.add('printing-table');
+  setTimeout(function() {
+    window.print();
+    document.body.classList.remove('printing-table');
+  }, 200);
+}
+
 // ============================================================
 // Event Binding (safe: runs after all functions are defined)
 // ============================================================
+function updateDeductionInfo() {
+  var rate = (parseFloat($('deductionRate').value)||0.7);
+  var years = $('deductionYears').value;
+  var limit = parseInt($('deductionLimit').value)||0;
+  var maxAnnual = Math.round(limit * rate/100 * 10)/10;
+  var enabled = $('deductionEnabled').value === 'yes';
+  if(!enabled) {
+    $('deductionInfo').textContent = '住宅ローン控除：適用なし';
+  } else {
+    $('deductionInfo').textContent = '控除率'+rate+'% × '+years+'年間 ／ 限度額'+limit.toLocaleString()+'万円 → 年間最大控除'+maxAnnual+'万円';
+  }
+}
+
 (function initBindings() {
   // Main simulation button
   var btn = $('runBtn');
@@ -896,6 +956,13 @@ function renderTable() {
   } else {
     console.error('runBtn element not found!');
   }
+
+  // Deduction info update
+  ['deductionEnabled','deductionYears','deductionRate','deductionLimit'].forEach(function(id) {
+    var el = $(id);
+    if(el) el.addEventListener('change', updateDeductionInfo);
+    if(el && el.type==='number') el.addEventListener('input', updateDeductionInfo);
+  });
 })();
 </script>
 </body>
